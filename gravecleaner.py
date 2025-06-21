@@ -9,6 +9,12 @@ from datetime import datetime
 from queue import Queue, Empty
 import glob
 import json
+import winreg
+import tempfile
+import psutil
+import time
+import random
+from PIL import Image, ImageTk
 
 class SmoothDiskCleaner:
     def __init__(self, root):
@@ -19,8 +25,14 @@ class SmoothDiskCleaner:
             'clean_duplicates': True,
             'clean_logs': False,
             'clean_empty_folders': False,
+            'clean_browser_cache': False,
+            'clean_recycle_bin': False,
+            'clean_old_windows': False,
+            'clean_downloads': False,
+            'clean_memory_dumps': False,
             'exclude_folders': [],
-            'max_file_size_mb': 50
+            'max_file_size_mb': 50,
+            'confirm_deletions': True
         }
         self.load_settings()
         
@@ -52,23 +64,26 @@ class SmoothDiskCleaner:
         self.root.after(100, self._process_queue)
 
     def _init_colors(self):
-        """Светло-оранжевая цветовая схема"""
-        self.bg_color = "#f8f4e9"
-        self.card_color = "#ffffff"
-        self.accent_color = "#ffa500"
+        """Оранжево-белая цветовая схема"""
+        self.bg_color = "#ffffff"
+        self.card_color = "#fff5e6"
+        self.accent_color = "#ff8c00"  # Оранжевый
+        self.secondary_color = "#ffaa4d"  # Светло-оранжевый
         self.text_color = "#333333"
-        self.error_color = "#ff4d4d"
-        self.success_color = "#4CAF50"
-        self.warning_color = "#ff9800"
+        self.error_color = "#ff3333"
+        self.success_color = "#33aa33"
+        self.warning_color = "#ff9900"
+        self.info_color = "#3399ff"
         self.log_bg_color = "#ffffff"
-        self.log_border = "#e0e0e0"
+        self.log_border = "#ffd699"
 
     def _init_fonts(self):
-        """Инициализация шрифтов"""
-        self.title_font = ("Segoe UI", 22, "bold")
+        """Инициализация современных шрифтов"""
+        self.title_font = ("Segoe UI Semibold", 22)
         self.subtitle_font = ("Segoe UI", 11)
         self.mono_font = ("Consolas", 10)
-        self.button_font = ("Segoe UI", 12, "bold")
+        self.button_font = ("Segoe UI Semibold", 12)
+        self.small_font = ("Segoe UI", 9)
 
     def _setup_ui(self):
         """Создание пользовательского интерфейса"""
@@ -88,6 +103,12 @@ class SmoothDiskCleaner:
             bg=self.bg_color
         ).pack(side=tk.LEFT)
         
+        # Индикатор диска
+        self.disk_space_frame = tk.Frame(header_frame, bg=self.bg_color)
+        self.disk_space_frame.pack(side=tk.RIGHT)
+        
+        self._update_disk_space_indicator()
+        
         # Область контента
         self.content_frame = tk.Frame(main_frame, bg=self.bg_color)
         self.content_frame.pack(fill=tk.BOTH, expand=True)
@@ -105,7 +126,7 @@ class SmoothDiskCleaner:
             text="НАЧАТЬ ОЧИСТКУ",
             bg=self.accent_color,
             fg="#ffffff",
-            activebackground="#e69500",
+            activebackground="#e67300",
             activeforeground="#ffffff",
             font=self.button_font,
             borderwidth=0,
@@ -122,7 +143,7 @@ class SmoothDiskCleaner:
             text="ОСТАНОВИТЬ",
             bg=self.error_color,
             fg="#ffffff",
-            activebackground="#cc4444",
+            activebackground="#cc0000",
             activeforeground="#ffffff",
             font=self.button_font,
             borderwidth=0,
@@ -134,14 +155,31 @@ class SmoothDiskCleaner:
         )
         self.stop_btn.pack(side=tk.LEFT)
         
+        # Кнопка анализа
+        self.analyze_btn = tk.Button(
+            buttons_frame,
+            text="АНАЛИЗ",
+            bg=self.secondary_color,
+            fg="#ffffff",
+            activebackground="#ff9933",
+            activeforeground="#ffffff",
+            font=self.button_font,
+            borderwidth=0,
+            padx=30,
+            pady=10,
+            relief=tk.FLAT,
+            command=self.run_analysis
+        )
+        self.analyze_btn.pack(side=tk.LEFT, padx=10)
+        
         # Кнопка настроек
         self.settings_btn = tk.Button(
             buttons_frame,
             text="НАСТРОЙКИ",
-            bg="#e0e0e0",
-            fg=self.text_color,
-            activebackground="#d0d0d0",
-            activeforeground=self.text_color,
+            bg=self.secondary_color,
+            fg="#ffffff",
+            activebackground="#ff9933",
+            activeforeground="#ffffff",
             font=self.button_font,
             borderwidth=0,
             padx=30,
@@ -150,6 +188,57 @@ class SmoothDiskCleaner:
             command=self.show_settings
         )
         self.settings_btn.pack(side=tk.RIGHT)
+
+    def _update_disk_space_indicator(self):
+        """Обновление индикатора свободного места на диске"""
+        for widget in self.disk_space_frame.winfo_children():
+            widget.destroy()
+            
+        try:
+            usage = psutil.disk_usage('/')
+            total_gb = usage.total / (1024**3)
+            used_gb = usage.used / (1024**3)
+            free_gb = usage.free / (1024**3)
+            percent_used = usage.percent
+            
+            # Цвет индикатора в зависимости от заполненности
+            if percent_used > 90:
+                color = self.error_color
+            elif percent_used > 70:
+                color = self.warning_color
+            else:
+                color = self.success_color
+            
+            # Создание индикатора
+            canvas = tk.Canvas(self.disk_space_frame, width=150, height=20, bg=self.bg_color, highlightthickness=0)
+            canvas.pack(side=tk.LEFT, padx=(10, 5))
+            
+            # Фон индикатора
+            canvas.create_rectangle(0, 0, 150, 20, fill="#ffe6cc", outline="")
+            
+            # Заполненная часть
+            canvas.create_rectangle(0, 0, 150 * percent_used / 100, 20, fill=color, outline="")
+            
+            # Текст
+            canvas.create_text(75, 10, text=f"{percent_used:.0f}%", fill=self.text_color, font=self.small_font)
+            
+            # Подпись
+            tk.Label(
+                self.disk_space_frame,
+                text=f"{free_gb:.1f} ГБ свободно из {total_gb:.1f} ГБ",
+                font=self.small_font,
+                fg=self.text_color,
+                bg=self.bg_color
+            ).pack(side=tk.LEFT)
+            
+        except Exception as e:
+            tk.Label(
+                self.disk_space_frame,
+                text="Не удалось получить данные о диске",
+                font=self.small_font,
+                fg=self.error_color,
+                bg=self.bg_color
+            ).pack(side=tk.LEFT)
 
     def _setup_main_interface(self):
         """Настройка основного интерфейса очистки"""
@@ -167,7 +256,7 @@ class SmoothDiskCleaner:
             bg=self.card_color, 
             padx=20, 
             pady=20,
-            highlightbackground="#e0e0e0",
+            highlightbackground=self.log_border,
             highlightthickness=1
         )
         stats_card.pack(fill=tk.BOTH, expand=True)
@@ -175,7 +264,7 @@ class SmoothDiskCleaner:
         tk.Label(
             stats_card,
             text="Статистика",
-            font=("Segoe UI", 16, "bold"),
+            font=("Segoe UI Semibold", 16),
             fg=self.text_color,
             bg=self.card_color
         ).pack(anchor=tk.W, pady=(0, 15))
@@ -253,8 +342,8 @@ class SmoothDiskCleaner:
         style.theme_use('clam')
         style.configure("custom.Horizontal.TProgressbar", 
                        background=self.accent_color,
-                       troughcolor="#f0f0f0",
-                       bordercolor="#e0e0e0",
+                       troughcolor="#ffe6cc",
+                       bordercolor="#ffd699",
                        lightcolor=self.accent_color,
                        darkcolor=self.accent_color)
         
@@ -286,7 +375,7 @@ class SmoothDiskCleaner:
             bg=self.card_color, 
             padx=20, 
             pady=20,
-            highlightbackground="#e0e0e0",
+            highlightbackground=self.log_border,
             highlightthickness=1
         )
         log_card.pack(fill=tk.BOTH, expand=True)
@@ -294,7 +383,7 @@ class SmoothDiskCleaner:
         tk.Label(
             log_card,
             text="Журнал операций",
-            font=("Segoe UI", 16, "bold"),
+            font=("Segoe UI Semibold", 16),
             fg=self.text_color,
             bg=self.card_color
         ).pack(anchor=tk.W, pady=(0, 15))
@@ -331,11 +420,12 @@ class SmoothDiskCleaner:
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # Настройка тегов для цветного текста
-        self.log_text.tag_config("timestamp", foreground="#888888")
-        self.log_text.tag_config("info", foreground="#0078d7")
+        self.log_text.tag_config("timestamp", foreground=self.secondary_color)
+        self.log_text.tag_config("info", foreground=self.info_color)
         self.log_text.tag_config("success", foreground=self.success_color)
         self.log_text.tag_config("warning", foreground=self.warning_color)
         self.log_text.tag_config("error", foreground=self.error_color)
+        self.log_text.tag_config("debug", foreground="#6c757d")
 
     def _process_queue(self):
         """Обработка сообщений из очереди для обновления UI"""
@@ -355,6 +445,8 @@ class SmoothDiskCleaner:
                 elif task[0] == "space":
                     self.space_freed = task[1]
                     self.space_label.config(text=self._format_size(task[1]))
+                elif task[0] == "update_disk_space":
+                    self._update_disk_space_indicator()
         except Empty:
             pass
         
@@ -416,6 +508,520 @@ class SmoothDiskCleaner:
         except Exception as e:
             print(f"Ошибка сохранения настроек: {str(e)}")
 
+    def run_analysis(self):
+        """Запуск анализа диска"""
+        if self.cleaning:
+            return
+            
+        self.cleaning = True
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+        self.files_deleted = 0
+        self.space_freed = 0
+        self.progress_value = 0
+        self.progress["value"] = 0
+        self.progress_label.config(text="0%")
+        self.current_operation = "Анализ начат"
+        self.current_op_label.config(text=self.current_operation)
+        
+        # Очистка лога
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.config(state=tk.DISABLED)
+        
+        # Запуск анализа в отдельном потоке
+        analysis_thread = threading.Thread(target=self._run_analysis, daemon=True)
+        analysis_thread.start()
+
+    def _run_analysis(self):
+        """Основной процесс анализа"""
+        try:
+            total_steps = sum([
+                self.settings['clean_temp'],
+                self.settings['clean_thumbnails'],
+                self.settings['clean_duplicates'],
+                self.settings['clean_logs'],
+                self.settings['clean_empty_folders'],
+                self.settings['clean_browser_cache'],
+                self.settings['clean_recycle_bin'],
+                self.settings['clean_old_windows'],
+                self.settings['clean_downloads'],
+                self.settings['clean_memory_dumps']
+            ])
+            
+            if total_steps == 0:
+                self.ui_queue.put(("log", "Не выбрано ни одной категории для анализа!", "warning"))
+                return
+                
+            step = 0
+            progress_per_step = 100 / total_steps
+            
+            # Анализ временных файлов
+            if self.settings['clean_temp'] and self.cleaning:
+                step += 1
+                self._analyze_temp_files()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Анализ кэша эскизов
+            if self.settings['clean_thumbnails'] and self.cleaning:
+                step += 1
+                self._analyze_thumbnail_cache()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Анализ дубликатов
+            if self.settings['clean_duplicates'] and self.cleaning:
+                step += 1
+                self._analyze_duplicates()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Анализ логов
+            if self.settings['clean_logs'] and self.cleaning:
+                step += 1
+                self._analyze_system_logs()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Анализ пустых папок
+            if self.settings['clean_empty_folders'] and self.cleaning:
+                step += 1
+                self._analyze_empty_folders()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Анализ кэша браузера
+            if self.settings['clean_browser_cache'] and self.cleaning:
+                step += 1
+                self._analyze_browser_cache()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Анализ корзины
+            if self.settings['clean_recycle_bin'] and self.cleaning:
+                step += 1
+                self._analyze_recycle_bin()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Анализ старых файлов Windows
+            if self.settings['clean_old_windows'] and self.cleaning:
+                step += 1
+                self._analyze_old_windows_files()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Анализ папки загрузок
+            if self.settings['clean_downloads'] and self.cleaning:
+                step += 1
+                self._analyze_downloads_folder()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Анализ дампов памяти
+            if self.settings['clean_memory_dumps'] and self.cleaning:
+                step += 1
+                self._analyze_memory_dumps()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            if self.cleaning:
+                self.ui_queue.put(("progress", 100))
+                self.ui_queue.put(("operation", "Анализ завершен"))
+                self.ui_queue.put(("log", f"Всего можно освободить: {self._format_size(self.space_freed)}", "success"))
+                messagebox.showinfo("Готово", "Анализ диска успешно завершен!")
+        
+        except Exception as e:
+            self.ui_queue.put(("log", f"Ошибка: {str(e)}", "error"))
+            messagebox.showerror("Ошибка", f"Произошла ошибка: {str(e)}")
+        finally:
+            self.cleaning = False
+            self.ui_queue.put(("operation", "Готов к работе"))
+            self.start_btn.config(state=tk.NORMAL)
+            self.stop_btn.config(state=tk.DISABLED)
+            self.ui_queue.put(("update_disk_space", None))
+    def _analyze_temp_files(self):
+        """Анализ временных файлов"""
+        self.ui_queue.put(("operation", "Анализ временных файлов..."))
+        
+        temp_folders = [
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Temp'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Temp'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Microsoft', 'Windows', 'INetCache'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Microsoft', 'Windows', 'INetCookies'),
+            tempfile.gettempdir()
+        ]
+        
+        total_size = 0
+        file_count = 0
+        
+        for folder in temp_folders:
+            if not self.cleaning:
+                return
+                
+            if os.path.exists(folder):
+                self.ui_queue.put(("operation", f"Анализ {os.path.basename(folder)}..."))
+                size, count = self._calculate_folder_size(folder)
+                total_size += size
+                file_count += count
+        
+        self.space_freed += total_size
+        self.files_deleted += file_count
+        
+        self.ui_queue.put(("files", self.files_deleted))
+        self.ui_queue.put(("space", self.space_freed))
+        self.ui_queue.put(("log", f"Временные файлы: можно удалить {file_count} файлов, {self._format_size(total_size)}", "info"))
+
+    def _analyze_thumbnail_cache(self):
+        """Анализ кэша эскизов Windows"""
+        self.ui_queue.put(("operation", "Анализ кэша эскизов..."))
+        
+        thumb_cache_paths = [
+            os.path.join(os.environ['USERPROFILE'], 'AppData', 'Local', 'Microsoft', 'Windows', 'Explorer'),
+        ]
+        
+        total_size = 0
+        file_count = 0
+        
+        for path in thumb_cache_paths:
+            if not self.cleaning:
+                return
+                
+            if os.path.exists(path):
+                for file in glob.glob(os.path.join(path, 'thumbcache_*.db')):
+                    try:
+                        if self._is_file_safe_to_delete(file):
+                            file_size = os.path.getsize(file)
+                            total_size += file_size
+                            file_count += 1
+                    except Exception as e:
+                        self.ui_queue.put(("log", f"Не удалось проанализировать {file}: {str(e)}", "error"))
+        
+        self.space_freed += total_size
+        self.files_deleted += file_count
+        
+        self.ui_queue.put(("files", self.files_deleted))
+        self.ui_queue.put(("space", self.space_freed))
+        self.ui_queue.put(("log", f"Кэш эскизов: можно удалить {file_count} файлов, {self._format_size(total_size)}", "info"))
+
+    def _analyze_duplicates(self):
+        """Анализ дубликатов файлов"""
+        self.ui_queue.put(("operation", "Анализ дубликатов файлов..."))
+        
+        search_paths = [
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Desktop'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Documents'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Downloads'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Pictures'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Music'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Videos'),
+        ]
+        
+        total_size = 0
+        file_count = 0
+        
+        for path in search_paths:
+            if not self.cleaning:
+                return
+                
+            if os.path.exists(path):
+                self.ui_queue.put(("operation", f"Анализ дубликатов в {os.path.basename(path)}..."))
+                size, count = self._find_duplicates(path)
+                total_size += size
+                file_count += count
+        
+        self.space_freed += total_size
+        self.files_deleted += file_count
+        
+        self.ui_queue.put(("files", self.files_deleted))
+        self.ui_queue.put(("space", self.space_freed))
+        self.ui_queue.put(("log", f"Дубликаты: можно удалить {file_count} файлов, {self._format_size(total_size)}", "info"))
+
+    def _analyze_system_logs(self):
+        """Анализ системных логов"""
+        self.ui_queue.put(("operation", "Анализ системных логов..."))
+        
+        log_paths = [
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Logs'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'System32', 'LogFiles'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Debug'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Microsoft', 'Windows', 'History'),
+        ]
+        
+        total_size = 0
+        file_count = 0
+        
+        for path in log_paths:
+            if not self.cleaning:
+                return
+                
+            if os.path.exists(path):
+                size, count = self._calculate_folder_size(path, extensions=['.log', '.txt', '.dmp', '.tmp'])
+                total_size += size
+                file_count += count
+        
+        self.space_freed += total_size
+        self.files_deleted += file_count
+        
+        self.ui_queue.put(("files", self.files_deleted))
+        self.ui_queue.put(("space", self.space_freed))
+        self.ui_queue.put(("log", f"Системные логи: можно удалить {file_count} файлов, {self._format_size(total_size)}", "info"))
+
+    def _analyze_empty_folders(self):
+        """Анализ пустых папок"""
+        self.ui_queue.put(("operation", "Анализ пустых папок..."))
+        
+        search_paths = [
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Desktop'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Documents'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Downloads'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Pictures'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Music'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Videos'),
+        ]
+        
+        folder_count = 0
+        
+        for path in search_paths:
+            if not self.cleaning:
+                return
+                
+            if os.path.exists(path):
+                count = self._count_empty_folders(path)
+                folder_count += count
+        
+        self.ui_queue.put(("log", f"Пустые папки: можно удалить {folder_count} папок", "info"))
+
+    def _analyze_browser_cache(self):
+        """Анализ кэша браузеров"""
+        self.ui_queue.put(("operation", "Анализ кэша браузеров..."))
+        
+        browser_paths = [
+            # Chrome
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'Cache'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'Media Cache'),
+            # Firefox
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Mozilla', 'Firefox', 'Profiles'),
+            # Edge
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Microsoft', 'Edge', 'User Data', 'Default', 'Cache'),
+            # Opera
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Opera Software', 'Opera Stable', 'Cache'),
+        ]
+        
+        total_size = 0
+        file_count = 0
+        
+        for path in browser_paths:
+            if not self.cleaning:
+                return
+                
+            if os.path.exists(path):
+                size, count = self._calculate_folder_size(path)
+                total_size += size
+                file_count += count
+        
+        self.space_freed += total_size
+        self.files_deleted += file_count
+        
+        self.ui_queue.put(("files", self.files_deleted))
+        self.ui_queue.put(("space", self.space_freed))
+        self.ui_queue.put(("log", f"Кэш браузеров: можно удалить {file_count} файлов, {self._format_size(total_size)}", "info"))
+
+    def _analyze_recycle_bin(self):
+        """Анализ корзины"""
+        self.ui_queue.put(("operation", "Анализ корзины..."))
+        
+        try:
+            from winshell import recycle_bin
+            items = recycle_bin()
+            total_size = sum(item.original_size() for item in items)
+            file_count = len(items)
+            
+            self.space_freed += total_size
+            self.files_deleted += file_count
+            
+            self.ui_queue.put(("files", self.files_deleted))
+            self.ui_queue.put(("space", self.space_freed))
+            self.ui_queue.put(("log", f"Корзина: можно очистить {file_count} файлов, {self._format_size(total_size)}", "info"))
+        except ImportError:
+            self.ui_queue.put(("log", "Модуль winshell не установлен, анализ корзины невозможен", "warning"))
+        except Exception as e:
+            self.ui_queue.put(("log", f"Ошибка анализа корзины: {str(e)}", "error"))
+
+    def _analyze_old_windows_files(self):
+        """Анализ старых файлов Windows"""
+        self.ui_queue.put(("operation", "Анализ старых файлов Windows..."))
+        
+        old_windows_paths = [
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'SoftwareDistribution', 'Download'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Temp'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Logs'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Minidump'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Prefetch'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'ServiceProfiles'),
+        ]
+        
+        total_size = 0
+        file_count = 0
+        
+        for path in old_windows_paths:
+            if not self.cleaning:
+                return
+                
+            if os.path.exists(path):
+                size, count = self._calculate_folder_size(path)
+                total_size += size
+                file_count += count
+        
+        self.space_freed += total_size
+        self.files_deleted += file_count
+        
+        self.ui_queue.put(("files", self.files_deleted))
+        self.ui_queue.put(("space", self.space_freed))
+        self.ui_queue.put(("log", f"Старые файлы Windows: можно удалить {file_count} файлов, {self._format_size(total_size)}", "info"))
+
+    def _analyze_downloads_folder(self):
+        """Анализ папки загрузок"""
+        self.ui_queue.put(("operation", "Анализ папки загрузок..."))
+        
+        downloads_path = os.path.join(os.environ.get('USERPROFILE', ''), 'Downloads')
+        
+        if not os.path.exists(downloads_path):
+            return
+            
+        # Анализ старых файлов (старше 30 дней)
+        total_size = 0
+        file_count = 0
+        now = time.time()
+        thirty_days_ago = now - 30 * 24 * 60 * 60
+        
+        for root, dirs, files in os.walk(downloads_path):
+            if not self.cleaning:
+                return
+                
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    if os.path.getmtime(file_path) < thirty_days_ago:
+                        file_size = os.path.getsize(file_path)
+                        total_size += file_size
+                        file_count += 1
+                except Exception as e:
+                    self.ui_queue.put(("log", f"Не удалось проанализировать {file_path}: {str(e)}", "error"))
+        
+        self.space_freed += total_size
+        self.files_deleted += file_count
+        
+        self.ui_queue.put(("files", self.files_deleted))
+        self.ui_queue.put(("space", self.space_freed))
+        self.ui_queue.put(("log", f"Старые загрузки: можно удалить {file_count} файлов, {self._format_size(total_size)}", "info"))
+
+    def _analyze_memory_dumps(self):
+        """Анализ дампов памяти"""
+        self.ui_queue.put(("operation", "Анализ дампов памяти..."))
+        
+        dump_paths = [
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Minidump'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'MEMORY.DMP'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'CrashDumps'),
+        ]
+        
+        total_size = 0
+        file_count = 0
+        
+        for path in dump_paths:
+            if not self.cleaning:
+                return
+                
+            if os.path.exists(path):
+                size, count = self._calculate_folder_size(path, extensions=['.dmp'])
+                total_size += size
+                file_count += count
+        
+        self.space_freed += total_size
+        self.files_deleted += file_count
+        
+        self.ui_queue.put(("files", self.files_deleted))
+        self.ui_queue.put(("space", self.space_freed))
+        self.ui_queue.put(("log", f"Дампы памяти: можно удалить {file_count} файлов, {self._format_size(total_size)}", "info"))
+
+    def _calculate_folder_size(self, folder_path, extensions=None):
+        """Вычисление размера папки"""
+        total_size = 0
+        file_count = 0
+        
+        for root, dirs, files in os.walk(folder_path):
+            if not self.cleaning:
+                return 0, 0
+                
+            for file in files:
+                file_path = os.path.join(root, file)
+                
+                # Проверка на исключенные папки
+                if any(excluded in file_path for excluded in self.settings['exclude_folders']):
+                    continue
+                    
+                # Проверка на расширения файлов
+                if extensions and not any(file.lower().endswith(ext) for ext in extensions):
+                    continue
+                    
+                try:
+                    if self._is_file_safe_to_delete(file_path):
+                        file_size = os.path.getsize(file_path)
+                        total_size += file_size
+                        file_count += 1
+                except Exception as e:
+                    self.ui_queue.put(("log", f"Не удалось проанализировать {file_path}: {str(e)}", "error"))
+        
+        return total_size, file_count
+
+    def _find_duplicates(self, start_path):
+        """Поиск дубликатов файлов"""
+        file_hashes = {}
+        duplicates_size = 0
+        duplicates_count = 0
+        
+        for root, dirs, files in os.walk(start_path):
+            if not self.cleaning:
+                return 0, 0
+                
+            for file in files:
+                file_path = os.path.join(root, file)
+                
+                # Проверка на исключенные папки
+                if any(excluded in file_path for excluded in self.settings['exclude_folders']):
+                    continue
+                    
+                try:
+                    if self._is_file_safe_to_delete(file_path):
+                        file_hash = self._get_file_hash(file_path)
+                        
+                        if file_hash in file_hashes:
+                            # Найден дубликат
+                            file_size = os.path.getsize(file_path)
+                            duplicates_size += file_size
+                            duplicates_count += 1
+                        else:
+                            file_hashes[file_hash] = file_path
+                except Exception as e:
+                    self.ui_queue.put(("log", f"Ошибка при обработке {file_path}: {str(e)}", "error"))
+        
+        return duplicates_size, duplicates_count
+
+    def _count_empty_folders(self, start_path):
+        """Подсчет пустых папок"""
+        empty_count = 0
+        
+        for root, dirs, files in os.walk(start_path, topdown=False):
+            if not self.cleaning:
+                return 0
+                
+            for dir in dirs:
+                dir_path = os.path.join(root, dir)
+                
+                # Проверка на исключенные папки
+                if any(excluded in dir_path for excluded in self.settings['exclude_folders']):
+                    continue
+                    
+                try:
+                    if not os.listdir(dir_path):
+                        empty_count += 1
+                except Exception as e:
+                    self.ui_queue.put(("log", f"Не удалось проверить папку {dir_path}: {str(e)}", "error"))
+        
+        return empty_count
+
     def start_cleaning(self):
         """Запуск процесса очистки"""
         if self.cleaning:
@@ -441,15 +1047,6 @@ class SmoothDiskCleaner:
         cleaning_thread = threading.Thread(target=self._run_cleaning, daemon=True)
         cleaning_thread.start()
 
-    def stop_cleaning(self):
-        """Остановка процесса очистки"""
-        self.cleaning = False
-        self.current_operation = "Очистка остановлена"
-        self.current_op_label.config(text=self.current_operation)
-        self.start_btn.config(state=tk.NORMAL)
-        self.stop_btn.config(state=tk.DISABLED)
-        self._log_message("Очистка остановлена пользователем", "warning")
-
     def _run_cleaning(self):
         """Основной процесс очистки"""
         try:
@@ -458,7 +1055,12 @@ class SmoothDiskCleaner:
                 self.settings['clean_thumbnails'],
                 self.settings['clean_duplicates'],
                 self.settings['clean_logs'],
-                self.settings['clean_empty_folders']
+                self.settings['clean_empty_folders'],
+                self.settings['clean_browser_cache'],
+                self.settings['clean_recycle_bin'],
+                self.settings['clean_old_windows'],
+                self.settings['clean_downloads'],
+                self.settings['clean_memory_dumps']
             ])
             
             if total_steps == 0:
@@ -498,6 +1100,36 @@ class SmoothDiskCleaner:
                 self._clean_empty_folders()
                 self.ui_queue.put(("progress", int(step * progress_per_step)))
             
+            # Очистка кэша браузеров
+            if self.settings['clean_browser_cache'] and self.cleaning:
+                step += 1
+                self._clean_browser_cache()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Очистка корзины
+            if self.settings['clean_recycle_bin'] and self.cleaning:
+                step += 1
+                self._clean_recycle_bin()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Очистка старых файлов Windows
+            if self.settings['clean_old_windows'] and self.cleaning:
+                step += 1
+                self._clean_old_windows_files()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Очистка папки загрузок
+            if self.settings['clean_downloads'] and self.cleaning:
+                step += 1
+                self._clean_downloads_folder()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
+            # Очистка дампов памяти
+            if self.settings['clean_memory_dumps'] and self.cleaning:
+                step += 1
+                self._clean_memory_dumps()
+                self.ui_queue.put(("progress", int(step * progress_per_step)))
+            
             if self.cleaning:
                 self.ui_queue.put(("progress", 100))
                 self.ui_queue.put(("operation", "Очистка завершена"))
@@ -513,21 +1145,22 @@ class SmoothDiskCleaner:
             self.ui_queue.put(("operation", "Готов к работе"))
             self.start_btn.config(state=tk.NORMAL)
             self.stop_btn.config(state=tk.DISABLED)
-
+            self.ui_queue.put(("update_disk_space", None))
     def _clean_temp_files(self):
         """Очистка временных файлов"""
-        self.ui_queue.put(("operation", "Поиск временных файлов..."))
+        self.ui_queue.put(("operation", "Очистка временных файлов..."))
         
         temp_folders = [
             os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Temp'),
             os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Temp'),
             os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Microsoft', 'Windows', 'INetCache'),
             os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Microsoft', 'Windows', 'INetCookies'),
+            tempfile.gettempdir()
         ]
         
         for folder in temp_folders:
             if not self.cleaning:
-                break
+                return
                 
             if os.path.exists(folder):
                 self.ui_queue.put(("operation", f"Очистка {os.path.basename(folder)}..."))
@@ -543,7 +1176,7 @@ class SmoothDiskCleaner:
         
         for path in thumb_cache_paths:
             if not self.cleaning:
-                break
+                return
                 
             if os.path.exists(path):
                 for file in glob.glob(os.path.join(path, 'thumbcache_*.db')):
@@ -569,11 +1202,13 @@ class SmoothDiskCleaner:
             os.path.join(os.environ.get('USERPROFILE', ''), 'Documents'),
             os.path.join(os.environ.get('USERPROFILE', ''), 'Downloads'),
             os.path.join(os.environ.get('USERPROFILE', ''), 'Pictures'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Music'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Videos'),
         ]
         
         for path in search_paths:
             if not self.cleaning:
-                break
+                return
                 
             if os.path.exists(path):
                 self.ui_queue.put(("operation", f"Поиск в {os.path.basename(path)}..."))
@@ -586,14 +1221,16 @@ class SmoothDiskCleaner:
         log_paths = [
             os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Logs'),
             os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'System32', 'LogFiles'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Debug'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Microsoft', 'Windows', 'History'),
         ]
         
         for path in log_paths:
             if not self.cleaning:
-                break
+                return
                 
             if os.path.exists(path):
-                self._clean_folder(path, extensions=['.log', '.txt'])
+                self._clean_folder(path, extensions=['.log', '.txt', '.dmp', '.tmp'])
 
     def _clean_empty_folders(self):
         """Удаление пустых папок"""
@@ -604,14 +1241,150 @@ class SmoothDiskCleaner:
             os.path.join(os.environ.get('USERPROFILE', ''), 'Documents'),
             os.path.join(os.environ.get('USERPROFILE', ''), 'Downloads'),
             os.path.join(os.environ.get('USERPROFILE', ''), 'Pictures'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Music'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'Videos'),
         ]
         
         for path in search_paths:
             if not self.cleaning:
-                break
+                return
                 
             if os.path.exists(path):
                 self._remove_empty_folders(path)
+
+    def _clean_browser_cache(self):
+        """Очистка кэша браузеров"""
+        self.ui_queue.put(("operation", "Очистка кэша браузеров..."))
+        
+        browser_paths = [
+            # Chrome
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'Cache'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'Media Cache'),
+            # Firefox
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Mozilla', 'Firefox', 'Profiles'),
+            # Edge
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Microsoft', 'Edge', 'User Data', 'Default', 'Cache'),
+            # Opera
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'Opera Software', 'Opera Stable', 'Cache'),
+        ]
+        
+        for path in browser_paths:
+            if not self.cleaning:
+                return
+                
+            if os.path.exists(path):
+                self._clean_folder(path)
+
+    def _clean_recycle_bin(self):
+        """Очистка корзины"""
+        self.ui_queue.put(("operation", "Очистка корзины..."))
+        
+        try:
+            from winshell import recycle_bin
+            items = recycle_bin()
+            total_size = sum(item.original_size() for item in items)
+            
+            if self.settings['confirm_deletions']:
+                answer = messagebox.askyesno(
+                    "Подтверждение",
+                    f"Вы действительно хотите очистить корзину? Будет удалено {len(items)} файлов, {self._format_size(total_size)}",
+                    parent=self.root
+                )
+                if not answer:
+                    self.ui_queue.put(("log", "Очистка корзины отменена пользователем", "warning"))
+                    return
+            
+            recycle_bin().empty(confirm=False, show_progress=False, sound=False)
+            
+            self.files_deleted += len(items)
+            self.space_freed += total_size
+            
+            self.ui_queue.put(("files", self.files_deleted))
+            self.ui_queue.put(("space", self.space_freed))
+            self.ui_queue.put(("log", f"Корзина очищена: удалено {len(items)} файлов, {self._format_size(total_size)}", "success"))
+        except ImportError:
+            self.ui_queue.put(("log", "Модуль winshell не установлен, очистка корзины невозможна", "warning"))
+        except Exception as e:
+            self.ui_queue.put(("log", f"Ошибка очистки корзины: {str(e)}", "error"))
+
+    def _clean_old_windows_files(self):
+        """Очистка старых файлов Windows"""
+        self.ui_queue.put(("operation", "Очистка старых файлов Windows..."))
+        
+        old_windows_paths = [
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'SoftwareDistribution', 'Download'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Temp'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Logs'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Minidump'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Prefetch'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'ServiceProfiles'),
+        ]
+        
+        for path in old_windows_paths:
+            if not self.cleaning:
+                return
+                
+            if os.path.exists(path):
+                self._clean_folder(path)
+
+    def _clean_downloads_folder(self):
+        """Очистка папки загрузок"""
+        self.ui_queue.put(("operation", "Очистка папки загрузок..."))
+        
+        downloads_path = os.path.join(os.environ.get('USERPROFILE', ''), 'Downloads')
+        
+        if not os.path.exists(downloads_path):
+            return
+            
+        # Удаление старых файлов (старше 30 дней)
+        now = time.time()
+        thirty_days_ago = now - 30 * 24 * 60 * 60
+        
+        for root, dirs, files in os.walk(downloads_path):
+            if not self.cleaning:
+                return
+                
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    if os.path.getmtime(file_path) < thirty_days_ago:
+                        if self.settings['confirm_deletions']:
+                            answer = messagebox.askyesno(
+                                "Подтверждение",
+                                f"Удалить файл {file}?",
+                                parent=self.root
+                            )
+                            if not answer:
+                                continue
+                                
+                        if self._is_file_safe_to_delete(file_path):
+                            file_size = os.path.getsize(file_path)
+                            os.remove(file_path)
+                            self.files_deleted += 1
+                            self.space_freed += file_size
+                            
+                            if self.files_deleted % 10 == 0:
+                                self.ui_queue.put(("files", self.files_deleted))
+                                self.ui_queue.put(("space", self.space_freed))
+                except Exception as e:
+                    self.ui_queue.put(("log", f"Не удалось удалить {file_path}: {str(e)}", "error"))
+
+    def _clean_memory_dumps(self):
+        """Очистка дампов памяти"""
+        self.ui_queue.put(("operation", "Очистка дампов памяти..."))
+        
+        dump_paths = [
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'Minidump'),
+            os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'MEMORY.DMP'),
+            os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local', 'CrashDumps'),
+        ]
+        
+        for path in dump_paths:
+            if not self.cleaning:
+                return
+                
+            if os.path.exists(path):
+                self._clean_folder(path, extensions=['.dmp'])
 
     def _clean_folder(self, folder_path, extensions=None):
         """Очистка указанной папки"""
@@ -634,6 +1407,16 @@ class SmoothDiskCleaner:
                     
                 try:
                     if self._is_file_safe_to_delete(file_path):
+                        if self.settings['confirm_deletions'] and random.random() < 0.1:
+                            # Запрашиваем подтверждение для 10% файлов
+                            answer = messagebox.askyesno(
+                                "Подтверждение",
+                                f"Удалить файл {file}?",
+                                parent=self.root
+                            )
+                            if not answer:
+                                continue
+                                
                         file_size = os.path.getsize(file_path)
                         os.remove(file_path)
                         self.files_deleted += 1
@@ -676,6 +1459,15 @@ class SmoothDiskCleaner:
                         # Найден дубликат
                         try:
                             if self._is_file_safe_to_delete(file_path):
+                                if self.settings['confirm_deletions']:
+                                    answer = messagebox.askyesno(
+                                        "Подтверждение",
+                                        f"Удалить дубликат файла {file}?",
+                                        parent=self.root
+                                    )
+                                    if not answer:
+                                        continue
+                                        
                                 file_size = os.path.getsize(file_path)
                                 os.remove(file_path)
                                 self.files_deleted += 1
@@ -709,6 +1501,15 @@ class SmoothDiskCleaner:
                     
                 try:
                     if not os.listdir(dir_path):
+                        if self.settings['confirm_deletions']:
+                            answer = messagebox.askyesno(
+                                "Подтверждение",
+                                f"Удалить пустую папку {dir}?",
+                                parent=self.root
+                            )
+                            if not answer:
+                                continue
+                                
                         os.rmdir(dir_path)
                         self.ui_queue.put(("log", f"Удалена пустая папка: {dir_path}", "info"))
                 except Exception as e:
@@ -729,6 +1530,11 @@ class SmoothDiskCleaner:
             self.ui_queue.put(("log", f"Пропуск системного файла: {file_path}", "warning"))
             return False
             
+        # Проверка на исполняемые файлы
+        if file_path.lower().endswith(('.exe', '.dll', '.sys', '.msi')):
+            self.ui_queue.put(("log", f"Пропуск исполняемого файла: {file_path}", "warning"))
+            return False
+            
         return True
 
     def _get_file_hash(self, file_path, block_size=65536):
@@ -741,43 +1547,69 @@ class SmoothDiskCleaner:
                 buf = f.read(block_size)
         return hasher.hexdigest()
 
+    def stop_cleaning(self):
+        """Остановка процесса очистки"""
+        self.cleaning = False
+        self.current_operation = "Очистка остановлена"
+        self.current_op_label.config(text=self.current_operation)
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        self._log_message("Очистка остановлена пользователем", "warning")
+
     def show_settings(self):
         """Отображение окна настроек"""
         settings_window = tk.Toplevel(self.root)
-        settings_window.title("Настройки")
-        settings_window.geometry("500x600")
+        settings_window.title("Настройки Smooth Disk Cleaner")
+        settings_window.geometry("600x800")
         settings_window.configure(bg=self.bg_color)
         settings_window.resizable(False, False)
         
         # Центрирование окна настроек
-        window_width = 500
-        window_height = 600
+        window_width = 600
+        window_height = 800
         x = (self.root.winfo_screenwidth() // 2) - (window_width // 2)
         y = (self.root.winfo_screenheight() // 2) - (window_height // 2)
         settings_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        
-        # Главный контейнер
-        main_frame = tk.Frame(settings_window, bg=self.bg_color, padx=20, pady=20)
+
+        # Главный контейнер с прокруткой
+        main_frame = tk.Frame(settings_window, bg=self.bg_color)
         main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        canvas = tk.Canvas(main_frame, bg=self.bg_color, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.bg_color)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
         
         # Заголовок
         tk.Label(
-            main_frame,
+            scrollable_frame,
             text="Настройки очистки",
-            font=("Segoe UI", 18, "bold"),
+            font=("Segoe UI Semibold", 18),
             fg=self.text_color,
             bg=self.bg_color
-        ).pack(pady=(0, 20))
+        ).pack(pady=(20, 10), padx=20, anchor=tk.W)
         
         # Фрейм с настройками
-        settings_frame = tk.Frame(main_frame, bg=self.card_color, padx=15, pady=15)
-        settings_frame.pack(fill=tk.BOTH, expand=True)
+        settings_frame = tk.Frame(scrollable_frame, bg=self.card_color, padx=15, pady=15)
+        settings_frame.pack(fill=tk.BOTH, padx=20, pady=10)
         
         # Категории очистки
         tk.Label(
             settings_frame,
             text="Категории для очистки:",
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI Semibold", 12),
             fg=self.text_color,
             bg=self.card_color
         ).pack(anchor=tk.W, pady=(0, 10))
@@ -852,14 +1684,93 @@ class SmoothDiskCleaner:
             activeforeground=self.text_color
         ).pack(anchor=tk.W, pady=5)
         
+        # Кэш браузеров
+        self.clean_browser_cache_var = tk.BooleanVar(value=self.settings['clean_browser_cache'])
+        tk.Checkbutton(
+            settings_frame,
+            text="Кэш браузеров",
+            variable=self.clean_browser_cache_var,
+            font=self.subtitle_font,
+            fg=self.text_color,
+            bg=self.card_color,
+            selectcolor=self.bg_color,
+            activebackground=self.card_color,
+            activeforeground=self.text_color
+        ).pack(anchor=tk.W, pady=5)
+        
+        # Корзина
+        self.clean_recycle_bin_var = tk.BooleanVar(value=self.settings['clean_recycle_bin'])
+        tk.Checkbutton(
+            settings_frame,
+            text="Корзина",
+            variable=self.clean_recycle_bin_var,
+            font=self.subtitle_font,
+            fg=self.text_color,
+            bg=self.card_color,
+            selectcolor=self.bg_color,
+            activebackground=self.card_color,
+            activeforeground=self.text_color
+        ).pack(anchor=tk.W, pady=5)
+        
+        # Старые файлы Windows
+        self.clean_old_windows_var = tk.BooleanVar(value=self.settings['clean_old_windows'])
+        tk.Checkbutton(
+            settings_frame,
+            text="Старые файлы Windows",
+            variable=self.clean_old_windows_var,
+            font=self.subtitle_font,
+            fg=self.text_color,
+            bg=self.card_color,
+            selectcolor=self.bg_color,
+            activebackground=self.card_color,
+            activeforeground=self.text_color
+        ).pack(anchor=tk.W, pady=5)
+        
+        # Папка загрузок
+        self.clean_downloads_var = tk.BooleanVar(value=self.settings['clean_downloads'])
+        tk.Checkbutton(
+            settings_frame,
+            text="Старые загрузки (30+ дней)",
+            variable=self.clean_downloads_var,
+            font=self.subtitle_font,
+            fg=self.text_color,
+            bg=self.card_color,
+            selectcolor=self.bg_color,
+            activebackground=self.card_color,
+            activeforeground=self.text_color
+        ).pack(anchor=tk.W, pady=5)
+        
+        # Дампы памяти
+        self.clean_memory_dumps_var = tk.BooleanVar(value=self.settings['clean_memory_dumps'])
+        tk.Checkbutton(
+            settings_frame,
+            text="Дампы памяти",
+            variable=self.clean_memory_dumps_var,
+            font=self.subtitle_font,
+            fg=self.text_color,
+            bg=self.card_color,
+            selectcolor=self.bg_color,
+            activebackground=self.card_color,
+            activeforeground=self.text_color
+        ).pack(anchor=tk.W, pady=5)
+        
+        # Дополнительные настройки
+        tk.Label(
+            settings_frame,
+            text="Дополнительные настройки:",
+            font=("Segoe UI Semibold", 12),
+            fg=self.text_color,
+            bg=self.card_color
+        ).pack(anchor=tk.W, pady=(20, 10))
+        
         # Максимальный размер файла
         tk.Label(
             settings_frame,
             text="Макс. размер файла (МБ):",
-            font=("Segoe UI", 12, "bold"),
+            font=self.subtitle_font,
             fg=self.text_color,
             bg=self.card_color
-        ).pack(anchor=tk.W, pady=(20, 5))
+        ).pack(anchor=tk.W, pady=(5, 0))
         
         self.max_file_size_var = tk.IntVar(value=self.settings['max_file_size_mb'])
         tk.Scale(
@@ -871,15 +1782,30 @@ class SmoothDiskCleaner:
             bg=self.card_color,
             fg=self.text_color,
             highlightbackground=self.card_color,
-            troughcolor="#f0f0f0",
-            activebackground=self.accent_color
-        ).pack(fill=tk.X, pady=5)
+            troughcolor="#ffe6cc",
+            activebackground=self.accent_color,
+            length=300
+        ).pack(anchor=tk.W, pady=5)
+        
+        # Подтверждение удаления
+        self.confirm_deletions_var = tk.BooleanVar(value=self.settings['confirm_deletions'])
+        tk.Checkbutton(
+            settings_frame,
+            text="Запрашивать подтверждение перед удалением",
+            variable=self.confirm_deletions_var,
+            font=self.subtitle_font,
+            fg=self.text_color,
+            bg=self.card_color,
+            selectcolor=self.bg_color,
+            activebackground=self.card_color,
+            activeforeground=self.text_color
+        ).pack(anchor=tk.W, pady=10)
         
         # Исключенные папки
         tk.Label(
             settings_frame,
             text="Исключенные папки:",
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI Semibold", 12),
             fg=self.text_color,
             bg=self.card_color
         ).pack(anchor=tk.W, pady=(20, 5))
@@ -899,16 +1825,15 @@ class SmoothDiskCleaner:
             self.excluded_folders_listbox.insert(tk.END, folder)
         
         # Кнопки управления исключениями
-               # Кнопки управления исключениями
         buttons_frame = tk.Frame(settings_frame, bg=self.card_color)
         buttons_frame.pack(fill=tk.X, pady=(5, 0))
         
         add_btn = tk.Button(
             buttons_frame,
             text="Добавить",
-            bg="#e0e0e0",
+            bg="#ffe6cc",
             fg=self.text_color,
-            activebackground="#d0d0d0",
+            activebackground="#ffd699",
             activeforeground=self.text_color,
             font=("Segoe UI", 10),
             borderwidth=0,
@@ -922,9 +1847,9 @@ class SmoothDiskCleaner:
         remove_btn = tk.Button(
             buttons_frame,
             text="Удалить",
-            bg="#e0e0e0",
+            bg="#ffe6cc",
             fg=self.text_color,
-            activebackground="#d0d0d0",
+            activebackground="#ffd699",
             activeforeground=self.text_color,
             font=("Segoe UI", 10),
             borderwidth=0,
@@ -936,7 +1861,7 @@ class SmoothDiskCleaner:
         remove_btn.pack(side=tk.LEFT)
         
         # Кнопки сохранения/отмены
-        bottom_buttons_frame = tk.Frame(main_frame, bg=self.bg_color)
+        bottom_buttons_frame = tk.Frame(scrollable_frame, bg=self.bg_color)
         bottom_buttons_frame.pack(fill=tk.X, pady=(20, 0))
         
         save_btn = tk.Button(
@@ -944,25 +1869,25 @@ class SmoothDiskCleaner:
             text="Сохранить",
             bg=self.accent_color,
             fg="white",
-            activebackground="#e69500",
+            activebackground="#e67300",
             activeforeground="white",
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI Semibold", 12),
             borderwidth=0,
             padx=20,
             pady=8,
             relief=tk.FLAT,
             command=lambda: self._save_settings_and_close(settings_window)
         )
-        save_btn.pack(side=tk.RIGHT, padx=(10, 0))
+        save_btn.pack(side=tk.RIGHT, padx=(10, 20))
         
         cancel_btn = tk.Button(
             bottom_buttons_frame,
             text="Отмена",
-            bg="#e0e0e0",
-            fg=self.text_color,
-            activebackground="#d0d0d0",
-            activeforeground=self.text_color,
-            font=("Segoe UI", 12),
+            bg=self.secondary_color,
+            fg="white",
+            activebackground="#ff9933",
+            activeforeground="white",
+            font=("Segoe UI Semibold", 12),
             borderwidth=0,
             padx=20,
             pady=8,
@@ -991,8 +1916,14 @@ class SmoothDiskCleaner:
             'clean_duplicates': self.clean_duplicates_var.get(),
             'clean_logs': self.clean_logs_var.get(),
             'clean_empty_folders': self.clean_empty_folders_var.get(),
+            'clean_browser_cache': self.clean_browser_cache_var.get(),
+            'clean_recycle_bin': self.clean_recycle_bin_var.get(),
+            'clean_old_windows': self.clean_old_windows_var.get(),
+            'clean_downloads': self.clean_downloads_var.get(),
+            'clean_memory_dumps': self.clean_memory_dumps_var.get(),
             'exclude_folders': list(self.excluded_folders_listbox.get(0, tk.END)),
-            'max_file_size_mb': self.max_file_size_var.get()
+            'max_file_size_mb': self.max_file_size_var.get(),
+            'confirm_deletions': self.confirm_deletions_var.get()
         }
         
         self.save_settings()
