@@ -18,7 +18,7 @@
 ---
 
 ## 📥 Установка
-1. Перейдите во вкладку [Releases](https://github.com/ваш-username/ваш-репозиторий/releases)  
+1. Перейдите во вкладку [Releases](https://github.com/GraveManDev/Disk-Cleaner-/releases/tag/V1.0)  
 2. Скачайте последнюю версию `.exe` файла  
 3. Запустите и следуйте инструкциям  
 
